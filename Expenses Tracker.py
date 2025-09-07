@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
+import os
 
 # File to store data
 FILE = "expenses.csv"
@@ -20,28 +21,52 @@ def save_data(df):
 
 # Update balances after new entry
 def update_balance(df, starting_balance):
+    if df.empty:
+        return df
     df = df.sort_values("Date").reset_index(drop=True)
     balance = starting_balance
     balances = []
     for _, row in df.iterrows():
         if row["Type"] == "Expense":
-            balance -= row["Amount"]
-        else:  # Salary or Income
-            balance += row["Amount"]
+            balance -= float(row["Amount"])
+        else:  # Income or Salary
+            balance += float(row["Amount"])
         balances.append(balance)
     df["Balance"] = balances
     return df
+
+# Persistent storage for settings
+SETTINGS_FILE = "settings.csv"
+
+# Load settings
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        settings = pd.read_csv(SETTINGS_FILE)
+        return float(settings.loc[0, "starting_balance"]), float(settings.loc[0, "salary"])
+    return 0.0, 0.0
+
+# Save settings
+def save_settings(starting_balance, salary):
+    settings = pd.DataFrame([[starting_balance, salary]], columns=["starting_balance", "salary"])
+    settings.to_csv(SETTINGS_FILE, index=False)
+
+# Load settings
+starting_balance, salary = load_settings()
 
 # App title
 st.title("💰 Expenses & Balance Tracker")
 
 # Load existing data
 df = load_data()
+df = update_balance(df, starting_balance)
 
-# Sidebar: Setup
-st.sidebar.header("Settings")
-starting_balance = st.sidebar.number_input("Starting Balance", min_value=0.0, step=0.01, value=0.0)
-salary = st.sidebar.number_input("Monthly Salary", min_value=0.0, step=0.01, value=0.0)
+# Show big balance display
+if not df.empty:
+    current_balance = df["Balance"].iloc[-1]
+else:
+    current_balance = starting_balance
+
+st.metric("Current Balance", f"${current_balance:,.2f}")
 
 # Sidebar: Add Expense
 st.sidebar.header("Add Transaction")
@@ -70,8 +95,15 @@ if st.sidebar.button("Salary Received"):
     save_data(df)
     st.sidebar.success("Salary added!")
 
+# Settings menu
+with st.expander("⚙️ Settings"):
+    new_starting_balance = st.number_input("Starting Balance", min_value=0.0, step=0.01, value=starting_balance)
+    new_salary = st.number_input("Monthly Salary", min_value=0.0, step=0.01, value=salary)
+    if st.button("Save Settings"):
+        save_settings(new_starting_balance, new_salary)
+        st.success("Settings saved. Please refresh the page.")
+
 # Reload updated data
-df = load_data()
 df = update_balance(df, starting_balance)
 
 # Display transactions
@@ -83,12 +115,10 @@ if not df.empty:
     st.subheader("Summary")
     total_expenses = df[df["Type"] == "Expense"]["Amount"].sum()
     total_income = df[df["Type"] == "Income"]["Amount"].sum()
-    current_balance = df["Balance"].iloc[-1]
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     col1.metric("Total Expenses", f"${total_expenses:,.2f}")
     col2.metric("Total Income", f"${total_income:,.2f}")
-    col3.metric("Current Balance", f"${current_balance:,.2f}")
 
     # Expense chart
     chart = alt.Chart(df[df["Type"] == "Expense"]).mark_bar().encode(
